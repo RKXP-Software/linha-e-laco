@@ -27,8 +27,8 @@ api.MapPut("/clients/{id:guid}", async (Guid id, CreateClientRequest request, Da
 api.MapDelete("/clients/{id:guid}", async (Guid id, DatabaseStore store) => await store.DeleteClient(id) ? Results.NoContent() : Results.NotFound());
 
 api.MapGet("/catalog", async (DatabaseStore store, bool? activeOnly) => Results.Ok(await store.GetCatalog(activeOnly == true ? false : true)));
-api.MapPost("/catalog", async (CreateCatalogItemRequest request, DatabaseStore store) => IsValidCatalog(request) ? Results.Created("/api/catalog", await store.CreateCatalog(request)) : Results.ValidationProblem(new Dictionary<string, string[]> { ["catalog"] = ["Preencha nome, preço e os detalhes do tipo escolhido."] }));
-api.MapPut("/catalog/{id:guid}", async (Guid id, CreateCatalogItemRequest request, DatabaseStore store) => IsValidCatalog(request) ? await store.UpdateCatalog(id, request) is { } item ? Results.Ok(item) : Results.NotFound() : Results.ValidationProblem(new Dictionary<string, string[]> { ["catalog"] = ["Preencha nome, preço e os detalhes do tipo escolhido."] }));
+api.MapPost("/catalog", async (CreateCatalogItemRequest request, DatabaseStore store) => DomainRules.IsValidCatalog(request) ? Results.Created("/api/catalog", await store.CreateCatalog(request)) : Results.ValidationProblem(new Dictionary<string, string[]> { ["catalog"] = ["Preencha nome, preço e os detalhes do tipo escolhido."] }));
+api.MapPut("/catalog/{id:guid}", async (Guid id, CreateCatalogItemRequest request, DatabaseStore store) => DomainRules.IsValidCatalog(request) ? await store.UpdateCatalog(id, request) is { } item ? Results.Ok(item) : Results.NotFound() : Results.ValidationProblem(new Dictionary<string, string[]> { ["catalog"] = ["Preencha nome, preço e os detalhes do tipo escolhido."] }));
 api.MapPatch("/catalog/{id:guid}/active", async (Guid id, ChangeActiveRequest request, DatabaseStore store) => await store.SetCatalogActive(id, request.Active) is { } item ? Results.Ok(item) : Results.NotFound());
 
 api.MapGet("/orders", async (DatabaseStore store) => Results.Ok(await store.GetOrders()));
@@ -45,5 +45,4 @@ api.MapDelete("/notes/{id:guid}", async (Guid id, DatabaseStore store) => await 
 
 app.Run();
 
-static bool IsValidCatalog(CreateCatalogItemRequest item) => !string.IsNullOrWhiteSpace(item.Name) && item.BasePrice >= 0 && item.EstimatedDays >= 0 && ((item.Kind == CatalogKind.Service && item.Service is not null && item.Garment is null) || (item.Kind == CatalogKind.Garment && item.Garment is not null && item.Service is null));
 public record ChangeActiveRequest(bool Active);

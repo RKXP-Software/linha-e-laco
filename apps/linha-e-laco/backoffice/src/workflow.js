@@ -1,0 +1,2 @@
+export const nextOrderStatus = status => ({ Quoted: 'Approved', Approved: 'InProduction', InProduction: 'Ready', Ready: 'Delivered' }[status] ?? null)
+export const pendingInstallments = installments => (installments ?? []).filter(item => item.status !== 'Paid')

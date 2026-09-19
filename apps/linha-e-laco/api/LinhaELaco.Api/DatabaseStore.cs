@@ -144,7 +144,7 @@ public sealed class DatabaseStore
         {
             var installment = request.Installments[index];
             await using var payment = new NpgsqlCommand("insert into payment_installments (order_id,installment_number,amount,due_date,status) values (@order,@number,@amount,@due,cast(@status as installment_status))", connection, transaction);
-            payment.Parameters.AddWithValue("order", id); payment.Parameters.AddWithValue("number", index + 1); payment.Parameters.AddWithValue("amount", installment.Amount); payment.Parameters.AddWithValue("due", installment.DueDate); payment.Parameters.AddWithValue("status", installment.DueDate < DateOnly.FromDateTime(DateTime.UtcNow) ? "overdue" : "open"); await payment.ExecuteNonQueryAsync();
+            payment.Parameters.AddWithValue("order", id); payment.Parameters.AddWithValue("number", index + 1); payment.Parameters.AddWithValue("amount", installment.Amount); payment.Parameters.AddWithValue("due", installment.DueDate); payment.Parameters.AddWithValue("status", DomainRules.InitialInstallmentStatus(installment.DueDate, DateOnly.FromDateTime(DateTime.UtcNow)) == InstallmentStatus.Overdue ? "overdue" : "open"); await payment.ExecuteNonQueryAsync();
         }
         await using (var history = new NpgsqlCommand("insert into order_status_history (order_id,status) values (@order,cast('quoted' as order_status))", connection, transaction)) { history.Parameters.AddWithValue("order", id); await history.ExecuteNonQueryAsync(); }
         await transaction.CommitAsync();
