@@ -22,8 +22,8 @@ Importe o mesmo repositório duas vezes, criando projetos independentes:
 
 | Projeto | Root Directory | Variável de produção e preview |
 | --- | --- | --- |
-| `linha-e-laco-web` | `apps/linha-e-laco/web` | `VITE_API_URL=https://<dominio-da-api>/api` |
-| `linha-e-laco-backoffice` | `apps/linha-e-laco/backoffice` | `VITE_API_URL=https://<dominio-da-api>/api` |
+| `linha-e-laco-web` | `apps/linha-e-laco/web` | `VITE_API_URL=https://linha-e-laco-production.up.railway.app/api` |
+| `linha-e-laco-backoffice` | `apps/linha-e-laco/backoffice` | `VITE_API_URL=https://linha-e-laco-production.up.railway.app/api` |
 
 O Vercel detecta Vite e usa os arquivos `vercel.json`. Depois do primeiro deploy da API, redeploy os dois projetos para incorporar a URL pública.
 
