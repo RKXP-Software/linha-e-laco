@@ -42,4 +42,4 @@ O Vercel detecta Vite e usa os arquivos `vercel.json`. Depois do primeiro deploy
 3. Mantenha mudanças de schema em `supabase/migrations/`; a migração inicial já está versionada.
 4. Antes de aplicar em produção, use `supabase db push --dry-run`; depois aplique com `supabase db push`.
 
-Não envie seed data nem chaves privadas para produção.
+Não envie seed data, senhas, connection strings ou chaves privadas para produção. No Railway, use `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` (quando a API precisar dela) e `ConnectionStrings__Supabase` exclusivamente em **Variables**.
