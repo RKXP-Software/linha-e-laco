@@ -1,84 +1,49 @@
 using LinhaELaco.Api;
+using Npgsql;
+using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
-
+builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 var localOrigins = new[] { "http://localhost:5173", "http://localhost:5174", "http://127.0.0.1:5173", "http://127.0.0.1:5174" };
 var configuredOrigins = builder.Configuration["CORS_ORIGINS"]?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) ?? [];
 var allowedOrigins = localOrigins.Concat(configuredOrigins).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy.WithOrigins(allowedOrigins).AllowAnyHeader().AllowAnyMethod()));
 
-builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy
-    .WithOrigins(allowedOrigins)
-    .AllowAnyHeader()
-    .AllowAnyMethod()));
-builder.Services.AddSingleton<DemoStore>();
+var connectionString = builder.Configuration.GetConnectionString("Supabase");
+if (string.IsNullOrWhiteSpace(connectionString)) throw new InvalidOperationException("ConnectionStrings__Supabase deve ser configurada.");
+builder.Services.AddSingleton(NpgsqlDataSource.Create(connectionString));
+builder.Services.AddSingleton<DatabaseStore>();
 
 var app = builder.Build();
 app.UseCors();
-
-app.MapGet("/health", () => Results.Ok(new { status = "ok", application = "Linha & Laço" }));
+app.MapGet("/health", async (NpgsqlDataSource dataSource) => { await using var cmd = dataSource.CreateCommand("select 1"); await cmd.ExecuteScalarAsync(); return Results.Ok(new { status = "ok", application = "Linha & Laço", database = "connected" }); });
 
 var api = app.MapGroup("/api");
+api.MapGet("/dashboard", async (DatabaseStore store, DateOnly? from, DateOnly? to) => Results.Ok(await store.GetDashboard(from ?? DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-30)), to ?? DateOnly.FromDateTime(DateTime.UtcNow))));
+api.MapGet("/clients", async (DatabaseStore store) => Results.Ok(await store.GetClients()));
+api.MapGet("/clients/{id:guid}", async (Guid id, DatabaseStore store) => await store.GetClient(id) is { } client ? Results.Ok(client) : Results.NotFound());
+api.MapPost("/clients", async (CreateClientRequest request, DatabaseStore store) => string.IsNullOrWhiteSpace(request.Name) ? Results.ValidationProblem(new Dictionary<string, string[]> { ["name"] = ["Nome é obrigatório."] }) : Results.Created("/api/clients", await store.CreateClient(request)));
+api.MapPut("/clients/{id:guid}", async (Guid id, CreateClientRequest request, DatabaseStore store) => string.IsNullOrWhiteSpace(request.Name) ? Results.ValidationProblem(new Dictionary<string, string[]> { ["name"] = ["Nome é obrigatório."] }) : await store.UpdateClient(id, request) is { } client ? Results.Ok(client) : Results.NotFound());
+api.MapDelete("/clients/{id:guid}", async (Guid id, DatabaseStore store) => await store.DeleteClient(id) ? Results.NoContent() : Results.NotFound());
 
-api.MapGet("/dashboard", (DemoStore store, DateOnly? from, DateOnly? to) =>
-{
-    var start = from ?? DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-30));
-    var end = to ?? DateOnly.FromDateTime(DateTime.UtcNow);
-    return Results.Ok(store.GetDashboard(start, end));
-});
+api.MapGet("/catalog", async (DatabaseStore store, bool? activeOnly) => Results.Ok(await store.GetCatalog(activeOnly == true ? false : true)));
+api.MapPost("/catalog", async (CreateCatalogItemRequest request, DatabaseStore store) => IsValidCatalog(request) ? Results.Created("/api/catalog", await store.CreateCatalog(request)) : Results.ValidationProblem(new Dictionary<string, string[]> { ["catalog"] = ["Preencha nome, preço e os detalhes do tipo escolhido."] }));
+api.MapPut("/catalog/{id:guid}", async (Guid id, CreateCatalogItemRequest request, DatabaseStore store) => IsValidCatalog(request) ? await store.UpdateCatalog(id, request) is { } item ? Results.Ok(item) : Results.NotFound() : Results.ValidationProblem(new Dictionary<string, string[]> { ["catalog"] = ["Preencha nome, preço e os detalhes do tipo escolhido."] }));
+api.MapPatch("/catalog/{id:guid}/active", async (Guid id, ChangeActiveRequest request, DatabaseStore store) => await store.SetCatalogActive(id, request.Active) is { } item ? Results.Ok(item) : Results.NotFound());
 
-api.MapGet("/notes", (DemoStore store) => Results.Ok(store.Notes.OrderBy(note => note.IsDone).ThenByDescending(note => note.CreatedAt)));
-api.MapPost("/notes", (CreateNoteRequest request, DemoStore store) =>
-{
-    if (string.IsNullOrWhiteSpace(request.Text)) return Results.ValidationProblem(new Dictionary<string, string[]> { ["text"] = ["Escreva uma anotação."] });
-    var note = store.AddNote(request);
-    return Results.Created($"/api/notes/{note.Id}", note);
-});
-api.MapPatch("/notes/{id:guid}", (Guid id, ChangeNoteStatusRequest request, DemoStore store) =>
-{
-    var note = store.ChangeNoteStatus(id, request.IsDone);
-    return note is null ? Results.NotFound() : Results.Ok(note);
-});
-api.MapDelete("/notes/{id:guid}", (Guid id, DemoStore store) => store.DeleteNote(id) ? Results.NoContent() : Results.NotFound());
+api.MapGet("/orders", async (DatabaseStore store) => Results.Ok(await store.GetOrders()));
+api.MapGet("/orders/{id:guid}", async (Guid id, DatabaseStore store) => await store.GetOrder(id) is { } order ? Results.Ok(order) : Results.NotFound());
+api.MapPost("/orders", async (CreateOrderRequest request, DatabaseStore store) => { if (request.Items.Count == 0) return Results.ValidationProblem(new Dictionary<string, string[]> { ["items"] = ["Inclua ao menos um item."] }); try { var order = await store.CreateOrder(request); return Results.Created($"/api/orders/{order.Id}", order); } catch (ArgumentException exception) { return Results.ValidationProblem(new Dictionary<string, string[]> { ["order"] = [exception.Message] }); } });
+api.MapPatch("/orders/{id:guid}/status", async (Guid id, ChangeOrderStatusRequest request, DatabaseStore store) => await store.ChangeOrderStatus(id, request.Status) is { } order ? Results.Ok(order) : Results.NotFound());
+api.MapPost("/installments/{id:guid}/pay", async (Guid id, DatabaseStore store) => await store.MarkInstallmentPaid(id) ? Results.NoContent() : Results.NotFound());
+api.MapGet("/orders/{id:guid}/receipt", async (Guid id, DatabaseStore store) => { var order = await store.GetOrder(id); if (order is null) return Results.NotFound(); var client = await store.GetClient(order.ClientId); return client is null ? Results.NotFound() : Results.File(ReceiptPdf.Create(order, client), "application/pdf", $"recibo-{order.Number}.pdf"); });
 
-api.MapGet("/clients", (DemoStore store) => Results.Ok(store.Clients));
-api.MapPost("/clients", (CreateClientRequest request, DemoStore store) =>
-{
-    if (string.IsNullOrWhiteSpace(request.Name)) return Results.ValidationProblem(new Dictionary<string, string[]> { ["name"] = ["Nome é obrigatório."] });
-    var client = store.AddClient(request);
-    return Results.Created($"/api/clients/{client.Id}", client);
-});
-
-api.MapGet("/catalog", (DemoStore store) => Results.Ok(store.Catalog));
-api.MapPost("/catalog", (CreateCatalogItemRequest request, DemoStore store) =>
-{
-    if (string.IsNullOrWhiteSpace(request.Name) || request.BasePrice < 0)
-        return Results.ValidationProblem(new Dictionary<string, string[]> { ["catalog"] = ["Nome e preço-base válido são obrigatórios."] });
-    var item = store.AddCatalogItem(request);
-    return Results.Created($"/api/catalog/{item.Id}", item);
-});
-
-api.MapGet("/orders", (DemoStore store) => Results.Ok(store.Orders));
-api.MapPost("/orders", (CreateOrderRequest request, DemoStore store) =>
-{
-    if (!store.Clients.Any(client => client.Id == request.ClientId) || request.Items.Count == 0)
-        return Results.ValidationProblem(new Dictionary<string, string[]> { ["order"] = ["Cliente existente e ao menos um item são obrigatórios."] });
-    var order = store.AddOrder(request);
-    return Results.Created($"/api/orders/{order.Id}", order);
-});
-
-api.MapPatch("/orders/{id:guid}/status", (Guid id, ChangeOrderStatusRequest request, DemoStore store) =>
-{
-    var updated = store.ChangeOrderStatus(id, request.Status);
-    return updated is null ? Results.NotFound() : Results.Ok(updated);
-});
-
-api.MapGet("/orders/{id:guid}/receipt", (Guid id, DemoStore store) =>
-{
-    var order = store.Orders.SingleOrDefault(item => item.Id == id);
-    if (order is null) return Results.NotFound();
-    var client = store.Clients.Single(item => item.Id == order.ClientId);
-    var pdf = ReceiptPdf.Create(order, client);
-    return Results.File(pdf, "application/pdf", $"recibo-{order.Number}.pdf");
-});
+api.MapGet("/notes", async (DatabaseStore store) => Results.Ok(await store.GetNotes()));
+api.MapPost("/notes", async (CreateNoteRequest request, DatabaseStore store) => string.IsNullOrWhiteSpace(request.Text) ? Results.ValidationProblem(new Dictionary<string, string[]> { ["text"] = ["Escreva uma anotação."] }) : Results.Created("/api/notes", await store.CreateNote(request)));
+api.MapPatch("/notes/{id:guid}", async (Guid id, ChangeNoteStatusRequest request, DatabaseStore store) => await store.SetNoteStatus(id, request.IsDone) is { } note ? Results.Ok(note) : Results.NotFound());
+api.MapDelete("/notes/{id:guid}", async (Guid id, DatabaseStore store) => await store.DeleteNote(id) ? Results.NoContent() : Results.NotFound());
 
 app.Run();
+
+static bool IsValidCatalog(CreateCatalogItemRequest item) => !string.IsNullOrWhiteSpace(item.Name) && item.BasePrice >= 0 && item.EstimatedDays >= 0 && ((item.Kind == CatalogKind.Service && item.Service is not null && item.Garment is null) || (item.Kind == CatalogKind.Garment && item.Garment is not null && item.Service is null));
+public record ChangeActiveRequest(bool Active);
