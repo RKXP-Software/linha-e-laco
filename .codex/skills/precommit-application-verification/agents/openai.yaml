@@ -1,0 +1,3 @@
+interface:
+  display_name: "Pre-commit Application Check"
+  short_description: "Verify app changes before Git commits"
