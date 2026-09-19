@@ -1,0 +1,18 @@
+# Dependencies and build artifacts
+**/node_modules/
+**/dist/
+**/bin/
+**/obj/
+
+# Secrets and local provider state
+.env
+.env.*
+!.env.example
+**/.vercel/
+**/.railway/
+**/supabase/.temp/
+**/supabase/.branches/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
